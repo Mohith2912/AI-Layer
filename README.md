@@ -14,7 +14,7 @@ The current prototype includes a complete clickable product flow:
 - LinkedIn connection placeholder for the authenticated user only;
 - settings, visibility guidance, reporting, and moderation views.
 
-Search and profile state are currently held in the browser for demonstration. The records are clearly labeled as demo or user-submitted preview data. Authentication, PostgreSQL persistence, server-side AI parsing, and approved LinkedIn OAuth are the next production implementation layer.
+Search and profile state still includes browser-held demo data so the prototype remains browsable without credentials. The production integration layer is now included: Auth.js with LinkedIn OpenID Connect, Prisma/PostgreSQL models, protected profile/search/report APIs, and server-side OpenAI Structured Outputs parsing. See `docs/production-setup.md` for required credentials and migration steps.
 
 ## Run locally
 
@@ -33,12 +33,11 @@ Open http://localhost:3000.
 - The AI parser will produce validated filters; it will not invent matches or generate database queries.
 - Private contact details are not part of the public search experience.
 
-## Planned next slices
+## Production integration notes
 
-1. Verified project setup, health check, and environment validation.
-2. Authentication, PostgreSQL, Prisma, consent, and visibility rules.
-3. Profile creation, editing, deletion, and reporting.
-4. Server-side AI parser with strict schema validation.
-5. Deterministic search, ranking, pagination, and moderation.
+- Authentication and PostgreSQL routes are protected server-side.
+- AI parsing is separated from database querying and uses a strict schema.
+- LinkedIn is an identity connection, not an arbitrary people-search source.
+- Actual credentials and a production migration must be supplied before live data is enabled.
 
 See `docs/architecture.md` for the initial design decisions.
