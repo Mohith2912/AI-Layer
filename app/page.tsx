@@ -52,6 +52,13 @@ function parseSearch(query: string) {
   return filters.length ? filters : ["Relevant keywords", "Professional context"];
 }
 
+function mapApiProfile(raw: { id: string; displayName: string; jobTitle?: string | null; companyName?: string | null; city?: string | null; country?: string | null; bio?: string | null; verification?: string; availability?: string | null; updatedAt?: string; sourceType?: string; education?: Array<{ institutionName: string; graduationYear?: number | null }>; skills?: Array<{ skill?: { name: string } }> }): Profile {
+  const name = raw.displayName || "Layer member";
+  const location = [raw.city, raw.country].filter(Boolean).join(", ") || "Location not provided";
+  const education = raw.education?.[0];
+  return { id: raw.id, initials: name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(), name, role: raw.jobTitle || "Professional", company: raw.companyName || "Independent", location, institution: education?.institutionName || "Not provided", graduationYear: education?.graduationYear || 0, experience: "Member profile", skills: raw.skills?.map((entry) => entry.skill?.name).filter((skill): skill is string => Boolean(skill)) || [], bio: raw.bio || "A visible member of the Layer community.", source: raw.sourceType === "DEMO" ? "Demo profile" : "User submitted", verified: raw.verification === "VERIFIED", available: Boolean(raw.availability), updated: raw.updatedAt ? new Date(raw.updatedAt).toLocaleDateString() : "Recently" };
+}
+
 function Logo() {
   return <span className="brand"><span className="brand-mark" aria-hidden="true">L</span><span>layer</span></span>;
 }
@@ -82,6 +89,9 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [notice, setNotice] = useState("");
   const [directoryFilter, setDirectoryFilter] = useState("");
+  const [parsedSearch, setParsedSearch] = useState<Record<string, unknown> | null>(null);
+  const [isUnderstanding, setIsUnderstanding] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
 
   const results = useMemo(() => {
     const normalized = query.toLowerCase();
@@ -98,11 +108,52 @@ export default function Home() {
 
   const directoryResults = profiles.filter((profile) => `${profile.name} ${profile.role} ${profile.institution} ${profile.skills.join(" ")}`.toLowerCase().includes(directoryFilter.toLowerCase()));
 
-  function beginSearch(event?: FormEvent) {
+  async function beginSearch(event?: FormEvent) {
     event?.preventDefault();
     if (!query.trim()) return;
-    setFilters(parseSearch(query));
-    setStage("review");
+    setIsUnderstanding(true);
+    try {
+      const response = await fetch("/api/search/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+      if (response.ok) {
+        const data = await response.json() as { search: Record<string, unknown> };
+        setParsedSearch(data.search);
+        const extracted = [
+          ...((data.search.education as { institutions?: string[] } | null)?.institutions || []),
+          ...((data.search.locations as string[] | undefined) || []),
+          ...((data.search.jobTitles as string[] | undefined) || []),
+          ...((data.search.skills as string[] | undefined) || []),
+          ...((data.search.education as { graduationYearMin?: number | null; graduationYearMax?: number | null } | null)?.graduationYearMin && (data.search.education as { graduationYearMin?: number | null; graduationYearMax?: number | null }).graduationYearMax ? [`${(data.search.education as { graduationYearMin: number }).graduationYearMin}–${(data.search.education as { graduationYearMax: number }).graduationYearMax}`] : []),
+        ];
+        setFilters(extracted.length ? extracted : parseSearch(query));
+      } else {
+        setParsedSearch(null);
+        setFilters(parseSearch(query));
+      }
+    } catch {
+      setParsedSearch(null);
+      setFilters(parseSearch(query));
+    } finally {
+      setIsUnderstanding(false);
+      setStage("review");
+    }
+  }
+
+  async function runSearch() {
+    setIsSearching(true);
+    if (parsedSearch) {
+      try {
+        const response = await fetch("/api/search/execute", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search: parsedSearch, page: 1, pageSize: 50 }) });
+        if (response.ok) {
+          const data = await response.json() as { results: Array<Parameters<typeof mapApiProfile>[0]> };
+          setProfiles(data.results.map(mapApiProfile));
+          showNotice(`${data.results.length} live profile${data.results.length === 1 ? "" : "s"} found.`);
+        }
+      } catch {
+        showNotice("Live search is unavailable, so the preview directory is being used.");
+      }
+    }
+    setIsSearching(false);
+    setStage("results");
   }
 
   function openProfile(profile: Profile) {
@@ -115,15 +166,29 @@ export default function Home() {
     window.setTimeout(() => setNotice(""), 3200);
   }
 
-  function createProfile(event: FormEvent<HTMLFormElement>) {
+  async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = String(form.get("name") || "New member");
     const profile: Profile = { id: `p${Date.now()}`, initials: name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(), name, role: String(form.get("role") || "Professional"), company: String(form.get("company") || "Independent"), location: String(form.get("location") || "India"), institution: String(form.get("institution") || "Not provided"), graduationYear: Number(form.get("graduationYear") || 2020), experience: "New profile", skills: String(form.get("skills") || "Professional").split(",").map((skill) => skill.trim()).filter(Boolean), bio: String(form.get("bio") || "").trim(), source: "User submitted", verified: false, available: form.get("available") === "on", updated: "Just now" };
+    try {
+      const response = await fetch("/api/profiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: name, jobTitle: profile.role, companyName: profile.company, city: profile.location, bio: profile.bio, visibility: "MEMBERS", availability: profile.available ? "open_to_mentoring" : null, institutionName: profile.institution, graduationYear: profile.graduationYear, skills: profile.skills, consentPurposeVersion: "2026-01" }) });
+      if (response.ok) {
+        const data = await response.json() as { profile: Parameters<typeof mapApiProfile>[0] };
+        const savedProfile = mapApiProfile(data.profile);
+        setProfiles((current) => [savedProfile, ...current.filter((item) => item.id !== savedProfile.id)]);
+        setSelectedProfile(savedProfile);
+        setView("profile");
+        showNotice("Your profile is saved to the Layer directory.");
+        return;
+      }
+    } catch {
+      // Keep the offline preview available when authentication or hosted storage is not configured.
+    }
     setProfiles((current) => [profile, ...current]);
     setSelectedProfile(profile);
     setView("profile");
-    showNotice("Your profile has been added to the private preview.");
+    showNotice("Your profile has been added to the local preview. Sign in to save it permanently.");
   }
 
   return <div className="app-frame">
@@ -149,8 +214,8 @@ export default function Home() {
         <div className="page-heading"><div><p className="eyebrow">People discovery</p><h1>Find the right people.</h1><p className="page-subtitle">Search across an opt-in professional community using the context that matters.</p></div><button className="button button-outline" onClick={() => setView("create")}>＋ Add your profile</button></div>
         <div className={`search-workspace stage-${stage}`}>
           <div className="search-panel-header"><div className="ai-orb">✦</div><div><strong>{stage === "input" ? "What are you looking for?" : stage === "review" ? "Review what Layer understood" : "Search results"}</strong><p>{stage === "input" ? "Use plain language. You can adjust the filters before anything is searched." : stage === "review" ? "We found a few useful signals. Edit them before searching the directory." : `Showing ${results.length} visible profiles for your search.`}</p></div><span className="step-indicator">{stage === "input" ? "1 / 3" : stage === "review" ? "2 / 3" : "3 / 3"}</span></div>
-          {stage === "input" && <div className="query-stage"><form onSubmit={beginSearch}><label htmlFor="main-search">Describe the people you want to find</label><div className="large-search"><span aria-hidden="true">⌕</span><input id="main-search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. Easwari Engineering College alumni from 2018–2022" /><button className="button button-primary" type="submit">Understand <span>↗</span></button></div></form><div className="search-suggestions"><span>Try a starting point</span>{examples.map((example) => <button key={example} onClick={() => { setQuery(example); setFilters(parseSearch(example)); setStage("review"); }}>{example}<span>→</span></button>)}</div></div>}
-          {stage === "review" && <div className="review-stage"><div className="intent-box"><span className="intent-label">YOUR SEARCH</span><p>“{query}”</p></div><div className="review-copy"><span className="intent-label">EXTRACTED FILTERS</span><div className="filter-chips">{filters.map((filter) => <button key={filter} onClick={() => setFilters((current) => current.filter((item) => item !== filter))}>{filter} <span>×</span></button>)}</div><button className="add-filter" onClick={() => showNotice("Custom filters will be available in the next release.")}>＋ Add another filter</button></div><div className="review-actions"><button className="button button-outline" onClick={() => setStage("input")}>← Edit search</button><button className="button button-primary" onClick={() => setStage("results")}>Search directory <span>↗</span></button></div></div>}
+          {stage === "input" && <div className="query-stage"><form onSubmit={beginSearch}><label htmlFor="main-search">Describe the people you want to find</label><div className="large-search"><span aria-hidden="true">⌕</span><input id="main-search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. Easwari Engineering College alumni from 2018–2022" /><button className="button button-primary" type="submit" disabled={isUnderstanding}>{isUnderstanding ? "Understanding…" : "Understand"} <span>↗</span></button></div></form><div className="search-suggestions"><span>Try a starting point</span>{examples.map((example) => <button key={example} onClick={() => { setQuery(example); setFilters(parseSearch(example)); setParsedSearch(null); setStage("review"); }}>{example}<span>→</span></button>)}</div></div>}
+          {stage === "review" && <div className="review-stage"><div className="intent-box"><span className="intent-label">YOUR SEARCH</span><p>“{query}”</p></div><div className="review-copy"><span className="intent-label">EXTRACTED FILTERS</span><div className="filter-chips">{filters.map((filter) => <button key={filter} onClick={() => setFilters((current) => current.filter((item) => item !== filter))}>{filter} <span>×</span></button>)}</div><button className="add-filter" onClick={() => showNotice("Custom filters will be available in the next release.")}>＋ Add another filter</button></div><div className="review-actions"><button className="button button-outline" onClick={() => setStage("input")}>← Edit search</button><button className="button button-primary" onClick={runSearch} disabled={isSearching}>{isSearching ? "Searching…" : "Search directory"} <span>↗</span></button></div></div>}
           {stage === "results" && <div className="results-stage"><div className="result-toolbar"><div className="filter-chips">{filters.map((filter) => <span className="static-chip" key={filter}>{filter}</span>)}</div><button className="text-button" onClick={() => setStage("review")}>Edit filters</button></div>{results.length ? <div className="results-grid">{results.map((profile) => <ProfileCard key={profile.id} profile={profile} onOpen={openProfile} />)}</div> : <div className="empty-state"><div className="empty-icon">⌕</div><h2>No visible profiles match yet.</h2><p>Try widening the graduation years or removing one filter. We won&apos;t invent a match that isn&apos;t in the directory.</p><button className="button button-outline" onClick={() => setStage("review")}>Adjust filters</button></div>}<p className="result-disclaimer">Results include only visible demo or opt-in profiles. LinkedIn is not scraped or searched directly.</p></div>}
         </div>
       </section>}

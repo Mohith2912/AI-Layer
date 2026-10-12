@@ -19,7 +19,14 @@ export async function POST(request: Request) {
     const data = profileSchema.parse(await request.json());
     const profile = await db.$transaction(async (transaction) => {
       const profile = await transaction.profile.upsert({ where: { ownerId: session.user.id }, update: { displayName: data.displayName, headline: data.headline, bio: data.bio, jobTitle: data.jobTitle, companyName: data.companyName, city: data.city, country: data.country, visibility: data.visibility, availability: data.availability, sourceType: "USER_SUBMITTED" }, create: { ownerId: session.user.id, displayName: data.displayName, headline: data.headline, bio: data.bio, jobTitle: data.jobTitle, companyName: data.companyName, city: data.city, country: data.country, visibility: data.visibility, availability: data.availability, sourceType: "USER_SUBMITTED" } });
+      await transaction.education.deleteMany({ where: { profileId: profile.id } });
+      await transaction.profileSkill.deleteMany({ where: { profileId: profile.id } });
       if (data.institutionName) await transaction.education.create({ data: { profileId: profile.id, institutionName: data.institutionName, graduationYear: data.graduationYear } });
+      for (const skill of data.skills) {
+        const normalizedName = skill.toLowerCase().replace(/\s+/g, " ").trim();
+        const savedSkill = await transaction.skill.upsert({ where: { normalizedName }, update: { name: skill }, create: { name: skill, normalizedName } });
+        await transaction.profileSkill.create({ data: { profileId: profile.id, skillId: savedSkill.id } });
+      }
       await transaction.profileSource.upsert({ where: { profileId: profile.id }, update: { sourceType: "USER_SUBMITTED", sourceName: "Profile owner" }, create: { profileId: profile.id, sourceType: "USER_SUBMITTED", sourceName: "Profile owner" } });
       await transaction.consentRecord.create({ data: { profileId: profile.id, consentType: "directory_visibility", purposeVersion: data.consentPurposeVersion, visibility: data.visibility, recordedBy: session.user.id } });
       return profile;

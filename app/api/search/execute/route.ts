@@ -14,13 +14,19 @@ export async function POST(request: Request) {
     const { search, page, pageSize } = body;
     const educationFilters = search.education?.institutions ?? [];
     const locationFilters = search.locations;
+    const keywordFilters = [...search.keywords, ...search.jobTitles, ...search.skills, ...search.industries, ...search.researchAreas];
+    const sourceMap = { demo: "DEMO", user_submitted: "USER_SUBMITTED", authorized_import: "AUTHORIZED_IMPORT" } as const;
     const profiles = await db.profile.findMany({
       where: {
         deletedAt: null,
         visibility: { in: ["MEMBERS", "PUBLIC"] },
         ...(search.verifiedOnly ? { verification: "VERIFIED" } : {}),
+        ...(search.sourceTypes.length ? { sourceType: { in: search.sourceTypes.map((source) => sourceMap[source]) } } : {}),
+        ...(search.remotePreference ? { remotePreference: { equals: search.remotePreference, mode: "insensitive" as const } } : {}),
+        ...(search.experienceYears ? { yearsExperienceMin: { lte: search.experienceYears.max }, yearsExperienceMax: { gte: search.experienceYears.min } } : {}),
         ...(educationFilters.length ? { education: { some: { institutionName: { in: educationFilters, mode: "insensitive" }, ...(search.education?.graduationYearMin ? { graduationYear: { gte: search.education.graduationYearMin } } : {}), ...(search.education?.graduationYearMax ? { graduationYear: { lte: search.education.graduationYearMax } } : {}) } } } : {}),
-        ...(locationFilters.length ? { OR: locationFilters.map((location) => ({ city: { contains: location, mode: "insensitive" as const } })) } : {}),
+        ...(locationFilters.length ? { OR: locationFilters.flatMap((location) => [{ city: { contains: location, mode: "insensitive" as const } }, { country: { contains: location, mode: "insensitive" as const } }]) } : {}),
+        ...(keywordFilters.length ? { AND: keywordFilters.map((keyword) => ({ OR: [{ displayName: { contains: keyword, mode: "insensitive" as const } }, { headline: { contains: keyword, mode: "insensitive" as const } }, { jobTitle: { contains: keyword, mode: "insensitive" as const } }, { companyName: { contains: keyword, mode: "insensitive" as const } }, { bio: { contains: keyword, mode: "insensitive" as const } }, { skills: { some: { skill: { name: { contains: keyword, mode: "insensitive" as const } } } } }] })) } : {}),
       },
       include: { skills: { include: { skill: true } }, education: true, source: true },
       orderBy: [{ verification: "desc" }, { updatedAt: "desc" }],
