@@ -2,9 +2,19 @@
 
 Layer is an opt-in professional people-discovery product. Users describe who they want to find in natural language, review the extracted filters, and search approved profile records with visible provenance and explainable matches.
 
-## Current slice
+## Current prototype
 
-The first implementation slice contains the search-first marketing shell and an interactive product preview. Search results are demo records only and are intentionally labeled as such. No authentication, database, AI provider, or real profile ingestion has been added yet.
+The current prototype includes a complete clickable product flow:
+
+- natural-language search with extracted-filter review;
+- Easwari Engineering College alumni demo search for 2018–2022;
+- visible profile cards and profile detail pages;
+- directory browsing and filtering;
+- opt-in profile creation with consent controls;
+- LinkedIn connection placeholder for the authenticated user only;
+- settings, visibility guidance, reporting, and moderation views.
+
+Search and profile state are currently held in the browser for demonstration. The records are clearly labeled as demo or user-submitted preview data. Authentication, PostgreSQL persistence, server-side AI parsing, and approved LinkedIn OAuth are the next production implementation layer.
 
 ## Run locally
 
