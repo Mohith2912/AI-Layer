@@ -5,6 +5,8 @@ out/
 !.env.example
 npm-debug.log*
 *.tsbuildinfo
+.env.local
+/generated/prisma
 
 
 .vercel
